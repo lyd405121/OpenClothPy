@@ -8,7 +8,7 @@ import numpy as np
 
 ti.init(arch=ti.gpu)
 
-imgSize = 1024
+imgSize = 720
 screenRes = ti.Vector([imgSize, imgSize])
 img = ti.Vector(3, dt=ti.f32, shape=[imgSize,imgSize])
 depth = ti.var(dt=ti.f32, shape=[imgSize,imgSize])
@@ -457,7 +457,7 @@ reset_cloth()
 frame = 0
 
 while gui.running:
-    if gui.get_event(ti.GUI.ESCAPE) or (frame > 300):
+    if gui.get_event(ti.GUI.ESCAPE) or (frame > 100):
         gui.running = False
     
     if gui.is_pressed('0', ti.GUI.LEFT):

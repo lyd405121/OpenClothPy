@@ -16,7 +16,7 @@ def create_gif(filenames, duration):
 
 if __name__ == "__main__":
     filenames = []
-    for i in range(0,300):
+    for i in range(0,100):
         filenames.append(str(i)+ ".png")
 
     create_gif(filenames, 0.03)
