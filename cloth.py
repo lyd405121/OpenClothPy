@@ -8,7 +8,7 @@ import numpy as np
 
 ti.init(arch=ti.gpu)
 
-imgSize = 512
+imgSize = 1024
 screenRes = ti.Vector([imgSize, imgSize])
 img = ti.Vector(3, dt=ti.f32, shape=[imgSize,imgSize])
 depth = ti.var(dt=ti.f32, shape=[imgSize,imgSize])
@@ -17,8 +17,8 @@ gui = ti.GUI('Cloth', res=(imgSize,imgSize))
 
 clothWid  = 4.0
 clothHgt  = 4.0
-clothResX = 127
-clothResY = 127
+clothResX = 31
+clothResY = 31
 
 pos_pre    = ti.Vector(3, dt=ti.f32, shape=(clothResX+1, clothResY+1))
 pos        = ti.Vector(3, dt=ti.f32, shape=(clothResX+1, clothResY+1))
@@ -109,7 +109,8 @@ def get_length3(v):
 @ti.func
 def get_length2(v):
     return ti.sqrt(v.x*v.x+ v.y*v.y)
-    
+
+
 @ti.func
 def get_proj(fovY, ratio, zn, zf):
     #  d3d perspective https://docs.microsoft.com/en-us/windows/win32/direct3d9/d3dxmatrixperspectiverh 
@@ -159,7 +160,7 @@ def transform(v):
 @ti.func
 def fill_pixel(v, z, c):
     if (v.x >= 0) and  (v.x <screenRes.x) and (v.y >=0 ) and  (v.y < screenRes.y):
-        if depth[v] >= z:
+        if depth[v] >= z :
             img[v]   = c
             depth[v] = z
         
@@ -183,12 +184,16 @@ def draw_line(v0,v1):
     
     s0 = ti.Vector([ti.cast(v0.x,  ti.i32), ti.cast(v0.y,  ti.i32)])
     s1 = ti.Vector([ti.cast(v1.x,  ti.i32), ti.cast(v1.y,  ti.i32)])
+    dis = get_length2(s1 - s0)
     
     x0 = s0.x
     y0 = s0.y
+    z0 = v0.z
     x1 = s1.x
     y1 = s1.y
-
+    z1 = v1.z
+    
+    
     dx = abs(x1 - x0)
     sx = -1
     if x0 < x1 :
@@ -197,18 +202,21 @@ def draw_line(v0,v1):
     
     dy = abs(y1 - y0)
     sy = -1
-    if dx > dy:
+    if y1 > y0:
         sy = 1
-
+    
+    dz = z1 - z0
+    
     err = 0
     if dx > dy :
         err = ti.cast(dx/2,  ti.i32)
     else :
         err = ti.cast(-dy/2, ti.i32)
     
-    for i in range(0, 32):
-
-        fill_pixel(ti.Vector([x0,y0]), v1.z, ti.Vector([0.0, 0.0, 1.0]))
+    for i in range(0, 64):
+        distC = get_length2( ti.Vector([x1,y1])- ti.Vector([x0,y0]))
+        
+        fill_pixel(ti.Vector([x0,y0]), dz * (distC / dis) + v0.z, ti.Vector([0.0, 0.0, 1.0]))
         e2 = err
         if (e2 > -dx):
             err -= dy
@@ -216,7 +224,7 @@ def draw_line(v0,v1):
         if (e2 <  dy):
             err += dx
             y0 += sy
-        if (x0 == x1) or (y0 == y1):
+        if (x0 == x1) and (y0 == y1):
             break
 
 @ti.func
@@ -300,7 +308,7 @@ def collision(coord):
     offcet = pos[coord] - collisionC
     dist   = get_length3(offcet)
     if(dist < collisionR):  
-        delta0         = collisionR - dist
+        delta0         = (collisionR - dist)
         pos[coord]    += offcet.normalized() *delta0
         pos_pre[coord] = pos[coord]
         vel[coord]     = ti.Vector([0.0, 0.0, 0.0])
@@ -365,15 +373,17 @@ def integrator_implicit():
 @ti.kernel
 def clear():
     for i, j in img:
-        wid = ti.tan(fov/2.0)*near
-        
+
         o    = eye
         c    = collisionC
-        dir  = ti.Vector([ (2.0 * i / screenRes.x - 1.0)*wid, (2.0 * j / screenRes.y - 1.0)*wid, near, 1.0])
+        s    = ti.Vector([ (2.0 * i / screenRes.x - 1.0), (2.0 * j / screenRes.y - 1.0), 0.0, 1.0])
+
         proj = get_proj(fov, 1.0, near, far).inverse()
         view = get_view(eye, target, up ).inverse()
-        dir  = view @ proj @ dir
-        d    = ti.Vector([dir.x, dir.y, dir.z])
+        s    = view @ proj @ s
+        s    = s / s.w
+        
+        d    = ti.Vector([s.x - o.x, s.y - o.y, s.z - o.z])
         d    = d.normalized()
         #    h1    h2         -->two hitpoint
         # o--*--p--*--->d     -->Ray
@@ -394,12 +404,11 @@ def clear():
             # so  |ch| = radius = |c - o - t*d| = |oc - td|
             # so  radius*radius = (oc - td)*(oc -td) = oc*oc +t*t*d*d -2*t*(oc*d)
             #so d*d*t^2   -2*(oc*d)* t + (oc*oc- radius*radius) = 0
-            #
             #cal ax^2+bx+c = 0
             
-            aa = get_length3(d)
+            aa = d.dot(d)
             bb = -2.0 * op_dist
-            cc = oc_dist*oc_dist - collisionR*collisionR
+            cc = oc.dot(oc) - collisionR*collisionR
             t1 = (-bb - ti.sqrt(bb * bb - 4.0 * aa * cc)) / 2.0 / aa
             h1 = o + t1 * d
             depth[i, j] = transform(h1).z
@@ -430,7 +439,7 @@ gravity    = ti.Vector([0.0, -0.00981, 0.0])
 collisionC = ti.Vector([0.0, 3.0, 0.0])
 collisionR = 1.0
 mass       = 1.0
-deltaT     = 0.01
+deltaT     = 0.05
 damping    = -0.0125
 fov        = 1.5
 near       = 1.0
@@ -445,9 +454,10 @@ KdBend     = -0.25
 
 mode = 2
 reset_cloth()
+frame = 0
 
 while gui.running:
-    if gui.get_event(ti.GUI.ESCAPE):
+    if gui.get_event(ti.GUI.ESCAPE) or (frame > 300):
         gui.running = False
     
     if gui.is_pressed('0', ti.GUI.LEFT):
@@ -480,3 +490,7 @@ while gui.running:
     
     gui.set_image(img.to_numpy())
     gui.show()
+    
+    
+    ti.imwrite(img, str(frame)+ ".png")
+    frame += 1
