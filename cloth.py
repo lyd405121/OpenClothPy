@@ -11,7 +11,7 @@ ti.init(arch=ti.gpu)
 imgSize = 720
 screenRes = ti.Vector([imgSize, imgSize])
 img = ti.Vector(3, dt=ti.f32, shape=[imgSize,imgSize])
-depth = ti.var(dt=ti.f32, shape=[imgSize,imgSize])
+depth = ti.field(dtype=ti.f32, shape=[imgSize,imgSize])
 gui = ti.GUI('Cloth', res=(imgSize,imgSize))
 
 
@@ -24,7 +24,7 @@ pos_pre    = ti.Vector(3, dt=ti.f32, shape=(clothResX+1, clothResY+1))
 pos        = ti.Vector(3, dt=ti.f32, shape=(clothResX+1, clothResY+1))
 vel        = ti.Vector(3, dt=ti.f32, shape=(clothResX+1, clothResY+1))
 F          = ti.Vector(3, dt=ti.f32, shape=(clothResX+1, clothResY+1))
-J          = ti.Matrix(3, 3, dt=ti.f32, shape=(clothResX+1, clothResY+1))
+J          = ti.Matrix.field(3, 3, dtype=ti.f32, shape=(clothResX+1, clothResY+1))
 
 
 eye        = ti.Vector(3, dt=ti.f32, shape=())
@@ -33,22 +33,22 @@ up         = ti.Vector(3, dt=ti.f32, shape=())
 gravity    = ti.Vector(3, dt=ti.f32, shape=())
 collisionC = ti.Vector(3, dt=ti.f32, shape=())
 
-mass       = ti.var(dt=ti.i32, shape=())
-damping    = ti.var(dt=ti.i32, shape=())
-pointSize  = ti.var(dt=ti.i32, shape=())
+mass       = ti.field(dtype=ti.i32, shape=())
+damping    = ti.field(dtype=ti.i32, shape=())
+pointSize  = ti.field(dtype=ti.i32, shape=())
            
-deltaT     = ti.var(dt=ti.f32, shape=())
-KsStruct   = ti.var(dt=ti.f32, shape=())
-KdStruct   = ti.var(dt=ti.f32, shape=())
-KsShear    = ti.var(dt=ti.f32, shape=())
-KdShear    = ti.var(dt=ti.f32, shape=())
-KsBend     = ti.var(dt=ti.f32, shape=())
-KdBend     = ti.var(dt=ti.f32, shape=())
+deltaT     = ti.field(dtype=ti.f32, shape=())
+KsStruct   = ti.field(dtype=ti.f32, shape=())
+KdStruct   = ti.field(dtype=ti.f32, shape=())
+KsShear    = ti.field(dtype=ti.f32, shape=())
+KdShear    = ti.field(dtype=ti.f32, shape=())
+KsBend     = ti.field(dtype=ti.f32, shape=())
+KdBend     = ti.field(dtype=ti.f32, shape=())
            
-fov        = ti.var(dt=ti.f32, shape=())
-near       = ti.var(dt=ti.f32, shape=())
-far        = ti.var(dt=ti.f32, shape=())
-collisionR = ti.var(dt=ti.f32, shape=())
+fov        = ti.field(dtype=ti.f32, shape=())
+near       = ti.field(dtype=ti.f32, shape=())
+far        = ti.field(dtype=ti.f32, shape=())
+collisionR = ti.field(dtype=ti.f32, shape=())
 
 
 
@@ -492,5 +492,5 @@ while gui.running:
     gui.show()
     
     
-    ti.imwrite(img, str(frame)+ ".png")
+    #ti.imwrite(img, str(frame)+ ".png")
     frame += 1
