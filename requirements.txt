@@ -1,0 +1,4 @@
+taichi==0.7.32
+taichi-glsl==0.0.9
+taichi-three==0.0.4
+

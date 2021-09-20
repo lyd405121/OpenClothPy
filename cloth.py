@@ -7,35 +7,30 @@ import numpy as np
 
 
 ti.init(arch=ti.gpu)
-
-imgSize = 720
-screenRes = ti.Vector([imgSize, imgSize])
-img = ti.Vector(3, dt=ti.f32, shape=[imgSize,imgSize])
-depth = ti.field(dtype=ti.f32, shape=[imgSize,imgSize])
-gui = ti.GUI('Cloth', res=(imgSize,imgSize))
+#gui system using taichi-ggui:
+#https://docs.taichi.graphics/zh-Hans/docs/lang/articles/misc/ggui
+imgSize = 1024
 
 
 clothWid  = 4.0
 clothHgt  = 4.0
 clothResX = 31
-clothResY = 31
 
-pos_pre    = ti.Vector(3, dt=ti.f32, shape=(clothResX+1, clothResY+1))
-pos        = ti.Vector(3, dt=ti.f32, shape=(clothResX+1, clothResY+1))
-vel        = ti.Vector(3, dt=ti.f32, shape=(clothResX+1, clothResY+1))
-F          = ti.Vector(3, dt=ti.f32, shape=(clothResX+1, clothResY+1))
-J          = ti.Matrix.field(3, 3, dtype=ti.f32, shape=(clothResX+1, clothResY+1))
+num_triangles = clothResX  * clothResX * 2
+indices       = ti.field(int, num_triangles * 3)
+vertices      = ti.Vector.field(3, float, (clothResX+1)*(clothResX+1))
 
+pos_pre    = ti.Vector.field(3, dtype=ti.f32, shape=(clothResX+1, clothResX+1))
+pos        = ti.Vector.field(3, dtype=ti.f32, shape=(clothResX+1, clothResX+1))
+vel        = ti.Vector.field(3, dtype=ti.f32, shape=(clothResX+1, clothResX+1))
+F          = ti.Vector.field(3, dtype=ti.f32, shape=(clothResX+1, clothResX+1))
+J          = ti.Matrix.field(3, 3, dtype=ti.f32, shape=(clothResX+1, clothResX+1))
 
-eye        = ti.Vector(3, dt=ti.f32, shape=())
-target     = ti.Vector(3, dt=ti.f32, shape=())
-up         = ti.Vector(3, dt=ti.f32, shape=())
-gravity    = ti.Vector(3, dt=ti.f32, shape=())
-collisionC = ti.Vector(3, dt=ti.f32, shape=())
+gravity    = ti.Vector.field(3, dtype=ti.f32, shape=())
+collisionC = ti.Vector.field(3, dtype=ti.f32, shape=())
 
 mass       = ti.field(dtype=ti.i32, shape=())
 damping    = ti.field(dtype=ti.i32, shape=())
-pointSize  = ti.field(dtype=ti.i32, shape=())
            
 deltaT     = ti.field(dtype=ti.f32, shape=())
 KsStruct   = ti.field(dtype=ti.f32, shape=())
@@ -112,122 +107,6 @@ def get_length2(v):
 
 
 @ti.func
-def get_proj(fovY, ratio, zn, zf):
-    #  d3d perspective https://docs.microsoft.com/en-us/windows/win32/direct3d9/d3dxmatrixperspectiverh 
-    # rember it is col major
-    # xScale     0          0              0
-    # 0        yScale       0              0
-    # 0        0        zf/(zn-zf)        -1
-    # 0        0        zn*zf/(zn-zf)      0
-    # where:
-    # yScale = cot(fovY/2)  
-    # xScale = yScale / aspect ratio
-    yScale = 1.0    / ti.tan(fovY/2)
-    xScale = yScale / ratio
-    return ti.Matrix([ [xScale, 0.0, 0.0, 0.0], [0.0, yScale, 0.0, 0.0], [0.0, 0.0, zf/(zn-zf), zn*zf/(zn-zf)], [0.0, 0.0, -1.0, 0.0] ])
-
-@ti.func
-def get_view(eye, target, up):
-    #  d3d lookat https://docs.microsoft.com/en-us/windows/win32/direct3d9/d3dxmatrixlookatrh
-    # rember it is col major
-    #zaxis = normal(Eye - At)
-    #xaxis = normal(cross(Up, zaxis))
-    #yaxis = cross(zaxis, xaxis)
-     
-    # xaxis.x           yaxis.x           zaxis.x          0
-    # xaxis.y           yaxis.y           zaxis.y          0
-    # xaxis.z           yaxis.z           zaxis.z          0
-    # dot(xaxis, eye)   dot(yaxis, eye)   dot(zaxis, eye)  1    ←  there is something wrong with it，  it should be '-'
-    
-    zaxis = eye - target
-    zaxis = zaxis.normalized()
-    xaxis = up.cross( zaxis)
-    xaxis = xaxis.normalized()
-    yaxis = zaxis.cross( xaxis)
-    return ti.Matrix([ [xaxis.x, xaxis.y, xaxis.z, -xaxis.dot(eye)], [yaxis.x, yaxis.y, yaxis.z, -yaxis.dot(eye)], [zaxis.x, zaxis.y, zaxis.z, -zaxis.dot(eye)], [0.0, 0.0, 0.0, 1.0] ])
-
-@ti.func
-def transform(v):
-    proj = get_proj(fov, 1.0, near, far)
-    view = get_view(eye, target, up )
-    
-    screenP  = proj @ view @ ti.Vector([v.x, v.y, v.z, 1.0])
-    screenP /= screenP.w
-    
-    return ti.Vector([(screenP.x+1.0)*0.5*screenRes.x, (screenP.y+1.0)*0.5*screenRes.y, screenP.z])
-    
-
-@ti.func
-def fill_pixel(v, z, c):
-    if (v.x >= 0) and  (v.x <screenRes.x) and (v.y >=0 ) and  (v.y < screenRes.y):
-        if depth[v] >= z :
-            img[v]   = c
-            depth[v] = z
-        
-@ti.func
-def draw_circle(v):
-    v = transform(v)
-    Centre = ti.Vector([ti.cast(v.x, ti.i32), ti.cast(v.y, ti.i32)])
-    for i in range(-pointSize, pointSize+1):
-        for j in range(-pointSize, pointSize+1):
-            dis = ti.sqrt(i*i + j*j)
-            if (dis < pointSize):
-                fill_pixel(Centre+ti.Vector([i,j]), v.z, ti.Vector([1.0, 0.0, 0.0]))
-
-
-
-#https://github.com/miloyip/line/blob/master/line_bresenham.c can be further optimized
-@ti.func
-def draw_line(v0,v1):
-    v0 = transform(v0)
-    v1 = transform(v1)
-    
-    s0 = ti.Vector([ti.cast(v0.x,  ti.i32), ti.cast(v0.y,  ti.i32)])
-    s1 = ti.Vector([ti.cast(v1.x,  ti.i32), ti.cast(v1.y,  ti.i32)])
-    dis = get_length2(s1 - s0)
-    
-    x0 = s0.x
-    y0 = s0.y
-    z0 = v0.z
-    x1 = s1.x
-    y1 = s1.y
-    z1 = v1.z
-    
-    
-    dx = abs(x1 - x0)
-    sx = -1
-    if x0 < x1 :
-        sx = 1
-    
-    
-    dy = abs(y1 - y0)
-    sy = -1
-    if y1 > y0:
-        sy = 1
-    
-    dz = z1 - z0
-    
-    err = 0
-    if dx > dy :
-        err = ti.cast(dx/2,  ti.i32)
-    else :
-        err = ti.cast(-dy/2, ti.i32)
-    
-    for i in range(0, 64):
-        distC = get_length2( ti.Vector([x1,y1])- ti.Vector([x0,y0]))
-        
-        fill_pixel(ti.Vector([x0,y0]), dz * (distC / dis) + v0.z, ti.Vector([0.0, 0.0, 1.0]))
-        e2 = err
-        if (e2 > -dx):
-            err -= dy
-            x0 += sx
-        if (e2 <  dy):
-            err += dx
-            y0 += sy
-        if (x0 == x1) and (y0 == y1):
-            break
-
-@ti.func
 def SolveConjugateGradient(A, x, b):
 
     r = b-A@x
@@ -257,11 +136,23 @@ def SolveConjugateGradient(A, x, b):
 @ti.kernel
 def reset_cloth():
     for i, j in pos:
-        pos[i, j]       = ti.Vector([clothWid * (i / clothResX) - clothWid / 2.0, 5.0, clothHgt * (j / clothResY)- clothHgt/2.0])
+        pos[i, j]       = ti.Vector([clothWid * (i / clothResX) - clothWid / 2.0, 5.0, clothHgt * (j / clothResX)- clothHgt/2.0])
         pos_pre [i, j]  = pos[i, j]
         vel[i, j]       = ti.Vector([0.0, 0.0, 0.0])
         F[i, j]         = ti.Vector([0.0, 0.0, 0.0])
 
+
+        if i < clothResX - 1 and j < clothResX - 1:
+            tri_id = ((i * (clothResX - 1)) + j) * 2
+            indices[tri_id * 3+2] = i * clothResX + j
+            indices[tri_id * 3+1] = (i + 1) * clothResX + j
+            indices[tri_id * 3+0] = i * clothResX + (j + 1)
+
+            tri_id += 1
+            indices[tri_id * 3+2] = (i + 1) * clothResX + j + 1
+            indices[tri_id * 3+1] = i * clothResX + (j + 1)
+            indices[tri_id * 3+0] = (i + 1) * clothResX + j
+    ball_centers[0] = ti.Vector([0.0, 3.0, -0.0])
 
 @ti.func
 def compute_force(coord, jacobian):
@@ -279,9 +170,9 @@ def compute_force(coord, jacobian):
         coord_neigh    = coord + coord_offcet
         
         
-        if (coord_neigh.x >= 0) and (coord_neigh.x <= clothResX) and (coord_neigh.y >= 0) and (coord_neigh.y <= clothResY):
+        if (coord_neigh.x >= 0) and (coord_neigh.x <= clothResX) and (coord_neigh.y >= 0) and (coord_neigh.y <= clothResX):
         
-            rest_length = get_length2(coord_offcet * ti.Vector([clothWid / clothResX, clothHgt / clothResY]))
+            rest_length = get_length2(coord_offcet * ti.Vector([clothWid / clothResX, clothHgt / clothResX]))
             
             p2          = pos[coord_neigh]
             v2          = (p2 - pos_pre[coord_neigh]) / deltaT
@@ -369,75 +260,20 @@ def integrator_implicit():
             pos[coord]  += vel[coord] * deltaT
             pos_pre[coord]  = tmp   
             
-      
+    
 @ti.kernel
-def clear():
-    for i, j in img:
+def update_verts():
+    for i, j in ti.ndrange(clothResX, clothResX):
+        vertices[i * clothResX + j] = pos[i, j]
+  
 
-        o    = eye
-        c    = collisionC
-        s    = ti.Vector([ (2.0 * i / screenRes.x - 1.0), (2.0 * j / screenRes.y - 1.0), 0.0, 1.0])
-
-        proj = get_proj(fov, 1.0, near, far).inverse()
-        view = get_view(eye, target, up ).inverse()
-        s    = view @ proj @ s
-        s    = s / s.w
-        
-        d    = ti.Vector([s.x - o.x, s.y - o.y, s.z - o.z])
-        d    = d.normalized()
-        #    h1    h2         -->two hitpoint
-        # o--*--p--*--->d     -->Ray
-        #   \   |
-        #    \  |
-        #     \ |
-        #      c              -->circle centre
-        oc = c - o
-        oc_dist = get_length3(oc)
-        op_dist = d.dot(oc)
-        pc_dist = ti.sqrt(oc_dist*oc_dist -op_dist*op_dist )
-        
-        
-        if pc_dist < collisionR:
-            img[i, j]=ti.Vector([0, 1, 0])
-            #h1 is nearer than h2
-            # because h1 = o + t*d
-            # so  |ch| = radius = |c - o - t*d| = |oc - td|
-            # so  radius*radius = (oc - td)*(oc -td) = oc*oc +t*t*d*d -2*t*(oc*d)
-            #so d*d*t^2   -2*(oc*d)* t + (oc*oc- radius*radius) = 0
-            #cal ax^2+bx+c = 0
-            
-            aa = d.dot(d)
-            bb = -2.0 * op_dist
-            cc = oc.dot(oc) - collisionR*collisionR
-            t1 = (-bb - ti.sqrt(bb * bb - 4.0 * aa * cc)) / 2.0 / aa
-            h1 = o + t1 * d
-            depth[i, j] = transform(h1).z
-            
-        else:
-            img[i, j]=ti.Vector([0, 0, 0])
-            depth[i, j] = 1.0
- 
-@ti.kernel
-def draw_mass_point():
-    for i, j in pos:
-        draw_circle(pos[i, j])
-        
-@ti.kernel
-def draw_grid():
-    for i, j in pos:
-        if i < clothResX:
-            draw_line(pos[i, j], pos[i+1, j])
-        if j < clothResY:
-            draw_line(pos[i, j], pos[i, j+1])
-
- 
-pointSize  = 2       
-eye        = ti.Vector([3.0, 3.0, 3.0])
-target     = ti.Vector([0.0, 3.0, 0.0])
-up         = ti.Vector([0.0, 1.0, 0.0])
 gravity    = ti.Vector([0.0, -0.00981, 0.0])
 collisionC = ti.Vector([0.0, 3.0, 0.0])
 collisionR = 1.0
+
+ball_radius = 1.0
+ball_centers = ti.Vector.field(3, float, 1)
+
 mass       = 1.0
 deltaT     = 0.05
 damping    = -0.0125
@@ -452,27 +288,19 @@ KdShear    = -0.25
 KsBend     = 50.0
 KdBend     = -0.25
 
+
+gui     = ti.ui.Window('Cloth', (imgSize, imgSize), vsync=True)
+canvas = gui.get_canvas()
+scene   =  ti.ui.Scene()
+camera  = ti.ui.make_camera()
+camera.position(3.0, 3.0, 3.0)
+camera.lookat(0.0, 3.0, 0.0)
+camera.up(0.0, 1.0, 0.0)
 mode = 2
 reset_cloth()
 frame = 0
 
 while gui.running:
-    if gui.get_event(ti.GUI.ESCAPE) or (frame > 100):
-        gui.running = False
-    
-    if gui.is_pressed('0', ti.GUI.LEFT):
-        mode = 0
-        reset_cloth() 
-    
-    if gui.is_pressed('1', ti.GUI.LEFT):
-        mode = 1
-        reset_cloth() 
-        
-    if gui.is_pressed('2', ti.GUI.LEFT):
-        mode = 2
-        reset_cloth() 
-        
-    #start_time = time.perf_counter()
     for i in  range(0, 20):
         if mode == 0:
             integrator_explicit()
@@ -481,16 +309,16 @@ while gui.running:
         if mode == 2:
             integrator_verlet()
 
-    #end_time = time.perf_counter()
-    #print("{:.4f}".format(end_time - start_time))
-    
-    clear()
-    draw_mass_point()
-    draw_grid()
-    
-    gui.set_image(img.to_numpy())
-    gui.show()
-    
-    
-    #ti.imwrite(img, str(frame)+ ".png")
+    update_verts()
+    scene.mesh(vertices, indices=indices, color=(0.5, 0.5, 0.5))
+    scene.particles(ball_centers, radius=1.0, color=(1.0, 0, 0))
+
+    scene.point_light(pos=(10.0, 10.0, 0.0), color=(1.0,1.0,1.0))
+    camera.track_user_inputs(gui, movement_speed=0.03, hold_key=ti.ui.LMB)
+    scene.set_camera(camera)
+
+    canvas.scene(scene)
+    canvas.sv()
+
+    ti.imwrite(img, str(frame)+ ".png")
     frame += 1
