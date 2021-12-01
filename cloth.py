@@ -6,10 +6,11 @@ import math
 import numpy as np
 
 
-ti.init(arch=ti.gpu)
+ti.init(arch=ti.cpu)
+
 #gui system using taichi-ggui:
 #https://docs.taichi.graphics/zh-Hans/docs/lang/articles/misc/ggui
-imgSize = 1024
+imgSize = 512
 
 
 clothWid  = 4.0
@@ -26,13 +27,11 @@ vel        = ti.Vector.field(3, dtype=ti.f32, shape=(clothResX+1, clothResX+1))
 F          = ti.Vector.field(3, dtype=ti.f32, shape=(clothResX+1, clothResX+1))
 J          = ti.Matrix.field(3, 3, dtype=ti.f32, shape=(clothResX+1, clothResX+1))
 
-gravity    = ti.Vector.field(3, dtype=ti.f32, shape=())
-collisionC = ti.Vector.field(3, dtype=ti.f32, shape=())
 
-mass       = ti.field(dtype=ti.i32, shape=())
-damping    = ti.field(dtype=ti.i32, shape=())
+
+
            
-deltaT     = ti.field(dtype=ti.f32, shape=())
+
 KsStruct   = ti.field(dtype=ti.f32, shape=())
 KdStruct   = ti.field(dtype=ti.f32, shape=())
 KsShear    = ti.field(dtype=ti.f32, shape=())
@@ -40,12 +39,6 @@ KdShear    = ti.field(dtype=ti.f32, shape=())
 KsBend     = ti.field(dtype=ti.f32, shape=())
 KdBend     = ti.field(dtype=ti.f32, shape=())
            
-fov        = ti.field(dtype=ti.f32, shape=())
-near       = ti.field(dtype=ti.f32, shape=())
-far        = ti.field(dtype=ti.f32, shape=())
-collisionR = ti.field(dtype=ti.f32, shape=())
-
-
 
 @ti.func
 def getNextNeighborKs(n):
@@ -152,7 +145,9 @@ def reset_cloth():
             indices[tri_id * 3+2] = (i + 1) * clothResX + j + 1
             indices[tri_id * 3+1] = i * clothResX + (j + 1)
             indices[tri_id * 3+0] = (i + 1) * clothResX + j
-    ball_centers[0] = ti.Vector([0.0, 3.0, -0.0])
+    ball_centers[0] = ti.Vector([0.0, 3.0, 0.0])
+    ball_radius[0]  = 1.0
+    deltaT[0] = 0.05
 
 @ti.func
 def compute_force(coord, jacobian):
@@ -175,7 +170,7 @@ def compute_force(coord, jacobian):
             rest_length = get_length2(coord_offcet * ti.Vector([clothWid / clothResX, clothHgt / clothResX]))
             
             p2          = pos[coord_neigh]
-            v2          = (p2 - pos_pre[coord_neigh]) / deltaT
+            v2          = (p2 - pos_pre[coord_neigh]) / deltaT[0]
             
             deltaP      = p1 - p2
             deltaV      = v1 - v2 
@@ -196,10 +191,10 @@ def collision(coord):
     if(pos[coord].y<0):
         pos[coord].y=0
         
-    offcet = pos[coord] - collisionC
+    offcet = pos[coord] - ball_centers[0]
     dist   = get_length3(offcet)
-    if(dist < collisionR):  
-        delta0         = (collisionR - dist)
+    if(dist < ball_radius[0]):  
+        delta0         = (ball_radius[0] - dist)
         pos[coord]    += offcet.normalized() *delta0
         pos_pre[coord] = pos[coord]
         vel[coord]     = ti.Vector([0.0, 0.0, 0.0])
@@ -218,8 +213,8 @@ def integrator_verlet():
             
             acc = F[coord] / mass
             tmp             = pos[coord]       
-            pos[coord]  = pos[coord] * 2.0 - pos_pre[coord] + acc * deltaT * deltaT
-            vel[coord]  = (pos[coord] - pos_pre[coord]) /deltaT
+            pos[coord]  = pos[coord] * 2.0 - pos_pre[coord] + acc * deltaT[0] * deltaT[0]
+            vel[coord]  = (pos[coord] - pos_pre[coord]) /deltaT[0]
             pos_pre[coord]  = tmp
             
 
@@ -236,8 +231,8 @@ def integrator_explicit():
             
             tmp             = pos[coord]
             acc = F[coord] / mass
-            pos[coord]  += vel[coord] * deltaT
-            vel[coord]  += acc * deltaT
+            pos[coord]  += vel[coord] * deltaT[0]
+            vel[coord]  += acc * deltaT[0]
             pos_pre[coord]  = tmp            
 
 
@@ -253,11 +248,11 @@ def integrator_implicit():
             collision(coord)
             tmp             = pos[coord]
             M     = ti.Matrix.identity(ti.f32, 3)*mass
-            A     = M - deltaT * deltaT* J[coord]
-            b     = M@vel[coord] + deltaT*F[coord]
+            A     = M - deltaT[0] * deltaT[0]* J[coord]
+            b     = M@vel[coord] + deltaT[0]*F[coord]
             
             vel[coord] = SolveConjugateGradient(A, ti.Vector([0.0, 0.0, 0.0]), b)
-            pos[coord]  += vel[coord] * deltaT
+            pos[coord]  += vel[coord] * deltaT[0]
             pos_pre[coord]  = tmp   
             
     
@@ -267,19 +262,13 @@ def update_verts():
         vertices[i * clothResX + j] = pos[i, j]
   
 
-gravity    = ti.Vector([0.0, -0.00981, 0.0])
-collisionC = ti.Vector([0.0, 3.0, 0.0])
-collisionR = 1.0
-
-ball_radius = 1.0
+gravity    = ti.Vector([0.0, -0.05, 0.0])
 ball_centers = ti.Vector.field(3, float, 1)
+ball_radius  = ti.field(float, shape=(1))
+deltaT       = ti.field(float, shape=(1))
 
 mass       = 1.0
-deltaT     = 0.05
 damping    = -0.0125
-fov        = 1.5
-near       = 1.0
-far        = 1000.0
            
 KsStruct   = 50.0
 KdStruct   = -0.25
@@ -289,11 +278,12 @@ KsBend     = 50.0
 KdBend     = -0.25
 
 
-gui     = ti.ui.Window('Cloth', (imgSize, imgSize), vsync=True)
+
+gui     = ti.ui.Window('Cloth', (imgSize, imgSize))
 canvas = gui.get_canvas()
 scene   =  ti.ui.Scene()
 camera  = ti.ui.make_camera()
-camera.position(3.0, 3.0, 3.0)
+camera.position(5.0, 3.0, 5.0)
 camera.lookat(0.0, 3.0, 0.0)
 camera.up(0.0, 1.0, 0.0)
 mode = 2
@@ -301,7 +291,7 @@ reset_cloth()
 frame = 0
 
 while gui.running:
-    for i in  range(0, 20):
+    for i in  range(0, 100):
         if mode == 0:
             integrator_explicit()
         if mode == 1:
@@ -311,14 +301,11 @@ while gui.running:
 
     update_verts()
     scene.mesh(vertices, indices=indices, color=(0.5, 0.5, 0.5))
-    scene.particles(ball_centers, radius=1.0, color=(1.0, 0, 0))
+    scene.particles(ball_centers, radius=0.95, color=(1.0, 0, 0))
 
     scene.point_light(pos=(10.0, 10.0, 0.0), color=(1.0,1.0,1.0))
     camera.track_user_inputs(gui, movement_speed=0.03, hold_key=ti.ui.LMB)
     scene.set_camera(camera)
 
     canvas.scene(scene)
-    canvas.sv()
-
-    ti.imwrite(img, str(frame)+ ".png")
-    frame += 1
+    gui.show()
