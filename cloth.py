@@ -1,12 +1,5 @@
-import sys
-import os
 import taichi as ti
-import time
-import math
-import numpy as np
-
-
-ti.init(arch=ti.cpu)
+ti.init(arch=ti.gpu)
 
 #gui system using taichi-ggui:
 #https://docs.taichi.graphics/zh-Hans/docs/lang/articles/misc/ggui
@@ -279,7 +272,7 @@ KdBend     = -0.25
 
 
 
-gui     = ti.ui.Window('Cloth', (imgSize, imgSize))
+gui     = ti.ui.Window('Cloth', (imgSize, imgSize), vsync=True)
 canvas = gui.get_canvas()
 scene   =  ti.ui.Scene()
 camera  = ti.ui.make_camera()
@@ -291,7 +284,7 @@ reset_cloth()
 frame = 0
 
 while gui.running:
-    for i in  range(0, 100):
+    for i in  range(0, 3):
         if mode == 0:
             integrator_explicit()
         if mode == 1:
